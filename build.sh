@@ -16,3 +16,6 @@ MIX_ENV=prod mix assets.deploy
 # Create server script and build release
 MIX_ENV=prod mix phx.gen.release
 MIX_ENV=prod mix release --overwrite
+
+ls -la _build/prod/rel/spades/bin/
+
