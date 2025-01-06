@@ -13,9 +13,12 @@ MIX_ENV=prod mix compile
 MIX_ENV=prod mix assets.build
 MIX_ENV=prod mix assets.deploy
 
+# Ensure release directory exists
+mkdir -p _build/prod/rel/spades/bin/
+
 # Create server script and build release
 MIX_ENV=prod mix phx.gen.release
 MIX_ENV=prod mix release --overwrite
 
+# Debug: List release directory
 ls -la _build/prod/rel/spades/bin/
-
