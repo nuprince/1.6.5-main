@@ -2,10 +2,10 @@ use Mix.Config
 
 # Configure your database
 config :spades, Spades.Repo,
-  username: "postgres",
-  password: "postgres",
-  database: "spades_dev",
-  hostname: "localhost",
+ username: "post_rf6c_user",
+  password: "8nDhvU3kilAUPtlboq1LiMQnyvysipIp",
+  database: "post_rf6c",
+  hostname: "dpg-cm4hq47qd2ns73cdgse0-a.oregon-postgres.render.com",
 
   show_sensitive_data_on_connection_error: true,
   pool_size: 20
