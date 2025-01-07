@@ -15,7 +15,7 @@ config :spades, SpadesWeb.Endpoint,
   cache_static_manifest: "priv/static/cache_manifest.json",
   check_origin: [
     "//localhost",
-    "//prospades-a1f9y14ju-kills4alivings-projects.vercel.app"",
+    "//prospades-a1f9y14ju-kills4alivings-projects.vercel.app",
     "//172.22.2.31:31231",
     "//172.22.2.32:31231",
     "//172.22.2.33:31231",
