@@ -2,8 +2,10 @@ defmodule Spades.Repo.Migrations.Started do
   use Ecto.Migration
 
   def change do
-    alter table(:games) do
-      add :started, :boolean, default: false
+    # Create games table first
+    create table(:games) do
+      add :is_started, :boolean, default: false
+      timestamps()
     end
   end
 end
