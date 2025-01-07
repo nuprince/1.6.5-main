@@ -1,11 +1,10 @@
 use Mix.Config
 
 config :spades, SpadesWeb.Endpoint,
- url: [host: System.get_env("RENDER_EXTERNAL_HOSTNAME") || "localhost", port: 80],
+ url: [host: "https://one-6-5-main-2.onrender.com", port: 80],
  cache_static_manifest: "priv/static/cache_manifest.json",
  check_origin: [
-   "https://prospades.vercel.app",
-   "http://prospades.vercel.app",
+   "//prospades.vercel.app",
    "http://localhost:3000"
  ],
  front_end_email_confirm_url: "http://starspades.com/confirm-email/{token}",
