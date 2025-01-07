@@ -49,7 +49,8 @@ defmodule Spades.MixProject do
       {:credo, ">= 1.4.0", only: :dev, runtime: false},
       {:dialyxir, ">= 1.0.0", only: :dev, runtime: false},
       {:ex_doc, ">= 0.0.0", only: :dev, runtime: false},
-      {:sobelow, ">= 0.0.0", only: :dev, runtime: false}
+      {:sobelow, ">= 0.0.0", only: :dev, runtime: false},
+      {:cors_plug, "~> 3.0"}
     ]
   end
 
