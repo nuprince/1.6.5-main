@@ -12,6 +12,7 @@ database_url =
 
 config :spades, Spades.Repo,
  ssl: true,
+ ssl_opts: [verify: :verify_none],
  url: database_url,
  pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10")
 
