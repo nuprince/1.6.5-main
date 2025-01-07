@@ -5,7 +5,7 @@ config :spades, SpadesWeb.Endpoint,
  cache_static_manifest: "priv/static/cache_manifest.json",
  check_origin: [
    "https://https://prospades.vercel.app",
-   "https://one-6-5-main-2.onrender.com",
+   
    "http://localhost:3000"
  ],
  front_end_email_confirm_url: "http://starspades.com/confirm-email/{token}",
