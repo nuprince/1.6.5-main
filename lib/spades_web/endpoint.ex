@@ -35,7 +35,7 @@ defmodule SpadesWeb.Endpoint do
 
  plug CORSPlug, origin: [
    "http://localhost:3000",
-   "https://https://prospades.vercel.app/lobby"
+   "https://https://prospades.vercel.app"
  ]
 
  plug SpadesWeb.Router
