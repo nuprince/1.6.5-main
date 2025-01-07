@@ -2,6 +2,9 @@
 # exit on error
 set -o errexit
 
+# Database setup and migrations
+MIX_ENV=prod mix ecto.migrate
+
 # Install Node dependencies in assets directory
 cd assets && npm install && cd ..
 
@@ -9,7 +12,7 @@ cd assets && npm install && cd ..
 mix deps.get --only prod
 MIX_ENV=prod mix compile
 
-# Compile assets
+# Compile assets  
 MIX_ENV=prod mix assets.build
 MIX_ENV=prod mix assets.deploy
 
