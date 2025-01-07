@@ -4,7 +4,7 @@ config :spades, SpadesWeb.Endpoint,
  url: [host: System.get_env("RENDER_EXTERNAL_HOSTNAME") || "localhost", port: 80],
  cache_static_manifest: "priv/static/cache_manifest.json",
  check_origin: [
-   "https://https://prospades.vercel.app",
+   "https://prospades.vercel.app",
    
    "http://localhost:3000"
  ],
