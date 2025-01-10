@@ -26,7 +26,7 @@ defmodule SpadesWeb.UserSocket do
   # See `Phoenix.Token` documentation for examples in
   # performing token verification on connect.
   def connect(params, socket, _connect_info) do
-    user = get_user_from_auth_token(params["authToken"])
+    user = get_user_from_auth_token(params["token"])
      Logger.info("Socket Join")
      params |> IO.inspect(label: "UserSocket Params")
      user |> IO.inspect(label: "User from token")
