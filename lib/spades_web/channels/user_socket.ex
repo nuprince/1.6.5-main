@@ -27,9 +27,9 @@ defmodule SpadesWeb.UserSocket do
   # performing token verification on connect.
   def connect(params, socket, _connect_info) do
     user = get_user_from_auth_token(params["authToken"])
-    # Logger.info("Socket Join")
-    # params |> IO.inspect(label: "UserSocket Params")
-    # user |> IO.inspect(label: "User from token")
+     Logger.info("Socket Join")
+     params |> IO.inspect(label: "UserSocket Params")
+     user |> IO.inspect(label: "User from token")
 
     ## Let non-authenticated users still connect to websockets,
     ## but we mark their user_id as nil
