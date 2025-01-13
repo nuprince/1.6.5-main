@@ -1,9 +1,23 @@
 defmodule SpadesGame.GameAI.Play do
   @moduledoc """
   Functions for the AI figuring out which card to play.
+  Enhanced with master-level strategies.
   """
   alias SpadesGame.{Card, Deck, Game, TrickCard}
   alias SpadesGame.GameAI.PlayInfo
+
+  defmodule GameState do
+    @moduledoc """
+    Tracks game state for informed decision making
+    """
+    defstruct [
+      spades_played: [],       # Track spades played
+      tricks_won: %{},         # Tricks won by each player
+      nil_bids: %{},           # Track nil bids
+      high_cards_played: %{},  # Track high cards (A,K,Q) played by suit
+      void_suits: %{}          # Track which players might be void
+    ]
+  end
 
   @spec play(Game.t()) :: Card.t()
   def play(%Game{turn: turn, trick: trick} = game) when turn != nil do
@@ -20,12 +34,24 @@ defmodule SpadesGame.GameAI.Play do
       partner_winning: partner_winning?(game)
     }
 
+    game_state = build_game_state(game)
+
     case length(trick) do
-      0 -> play_pos1(info)
-      1 -> play_pos2(info)
-      2 -> play_pos3(info)
-      3 -> play_pos4(info)
+      0 -> play_pos1(info, game_state)
+      1 -> play_pos2(info, game_state)
+      2 -> play_pos3(info, game_state)
+      3 -> play_pos4(info, game_state)
     end
+  end
+
+  defp build_game_state(game) do
+    @type game_state :: %GameState{
+      spades_played: list(Card.t()),
+      tricks_won: %{optional(atom()) => integer()},
+      nil_bids: %{optional(atom()) => boolean()},
+      high_cards_played: %{optional(atom()) => list(integer())},
+      void_suits: %{optional(atom()) => list(atom())}
+    }
   end
 
   def partner_winning?(%Game{trick: trick}) do
@@ -43,270 +69,500 @@ defmodule SpadesGame.GameAI.Play do
     game[turn].bid == 0
   end
 
-  # Enhanced play_pos1 with smarter lead strategy
-  @spec play_pos1(PlayInfo.t()) :: Card.t()
-  def play_pos1(%PlayInfo{
-        hand: hand,
-        valid_cards: valid_cards,
-        me_nil: me_nil,
-        partner_nil: partner_nil,
-        left_nil: left_nil,
-        right_nil: right_nil
-      }) do
-    {best_card, worst_card} = empty_trick_best_worst(valid_cards)
-
-    cond do
-      me_nil ->
-        find_safest_card(valid_cards)
-      
-      partner_nil ->
-        find_strongest_lead(valid_cards, hand)
-      
-      left_nil or right_nil ->
-        find_nil_breaking_card(valid_cards)
-      
-      has_winning_sequence?(valid_cards) ->
-        lead_from_sequence(valid_cards)
-        
-      should_lead_trump?(valid_cards, hand) ->
-        find_best_spade(valid_cards)
-        
-      true ->
-        lead_standard_card(valid_cards, hand)
-    end
+  defp track_spades_played(game) do
+    game.trick
+    |> Enum.filter(fn %TrickCard{card: %Card{suit: suit}} -> suit == :s end)
+    |> Enum.map(fn %TrickCard{card: card} -> card end)
   end
 
-  # New helper functions for improved lead play
-  defp find_safest_card(cards) do
-    non_face_cards = Enum.filter(cards, fn %Card{rank: rank} -> rank < 11 end)
-    if Enum.empty?(non_face_cards), do: List.first(cards), else: List.first(non_face_cards)
+  defp count_tricks_won(game) do
+    %{
+      north: game.north.tricks_won,
+      south: game.south.tricks_won,
+      east: game.east.tricks_won,
+      west: game.west.tricks_won
+    }
   end
 
-  defp find_strongest_lead(cards, hand) do
-    spades = Enum.filter(cards, fn %Card{suit: suit} -> suit == :s end)
-    if !Enum.empty?(spades), do: Enum.max_by(spades, & &1.rank), else: Enum.max_by(cards, & &1.rank)
+  defp get_nil_bids(game) do
+    %{
+      north: game.north.bid == 0,
+      south: game.south.bid == 0,
+      east: game.east.bid == 0,
+      west: game.west.bid == 0
+    }
   end
 
-  defp find_nil_breaking_card(cards) do
-    high_cards = Enum.filter(cards, fn %Card{rank: rank} -> rank >= 12 end)
-    if !Enum.empty?(high_cards), do: Enum.max_by(high_cards, & &1.rank), else: Enum.max_by(cards, & &1.rank)
-  end
+  defp track_high_cards(game) do
+    trick_cards = Enum.map(game.trick, & &1.card)
 
-  defp has_winning_sequence?(cards) do
-    suits = Enum.group_by(cards, & &1.suit)
-    Enum.any?(suits, fn {_suit, suit_cards} ->
-      ranks = Enum.map(suit_cards, & &1.rank) |> Enum.sort(:desc)
-      length(ranks) >= 2 and hd(ranks) - Enum.at(ranks, 1) == 1
+    initial_map = %{
+      s: [],  # spades
+      h: [],  # hearts
+      d: [],  # diamonds
+      c: []   # clubs
+    }
+
+    Enum.reduce(trick_cards, initial_map, fn %Card{rank: rank, suit: suit}, acc ->
+      if rank >= 12 do  # Track Ace(14), King(13), Queen(12)
+        Map.update!(acc, suit, fn cards -> [rank | cards] end)
+      else
+        acc
+      end
     end)
   end
 
-  defp lead_from_sequence(cards) do
-    suits = Enum.group_by(cards, & &1.suit)
-    {_suit, sequence} = 
-      Enum.find(suits, fn {_suit, suit_cards} ->
-        ranks = Enum.map(suit_cards, & &1.rank) |> Enum.sort(:desc)
-        length(ranks) >= 2 and hd(ranks) - Enum.at(ranks, 1) == 1
-      end)
-    Enum.max_by(sequence, & &1.rank)
+  defp track_void_suits(game) do
+    players = [:north, :south, :east, :west]
+
+    initial_map = Enum.reduce(players, %{}, fn player, acc ->
+      Map.put(acc, player, [])
+    end)
+
+    analyze_trick_history(game.trick, initial_map)
   end
 
-  defp should_lead_trump?(cards, hand) do
-    spades = Enum.filter(cards, fn %Card{suit: suit} -> suit == :s end)
-    non_spades = Enum.filter(hand, fn %Card{suit: suit} -> suit != :s end)
-    !Enum.empty?(spades) and length(non_spades) < 4
+  defp analyze_trick_history(trick_history, void_map) do
+    Enum.reduce(trick_history, void_map, fn trick_card, acc ->
+      %TrickCard{card: %Card{suit: played_suit}, seat: player} = trick_card
+      led_suit = get_led_suit(trick_history)
+
+      if played_suit != led_suit do
+        Map.update!(acc, player, fn voids ->
+          if led_suit not in voids, do: [led_suit | voids], else: voids
+        end)
+      else
+        acc
+      end
+    end)
   end
 
-  defp find_best_spade(cards) do
-    spades = Enum.filter(cards, fn %Card{suit: suit} -> suit == :s end)
-    if !Enum.empty?(spades), do: Enum.max_by(spades, & &1.rank), else: Enum.random(cards)
+  defp get_led_suit(trick_history) when length(trick_history) > 0 do
+    List.last(trick_history).card.suit
+  end
+  defp get_led_suit(_), do: nil
+
+  # Position-specific play logic
+  @spec play_pos1(PlayInfo.t(), GameState.t()) :: Card.t()
+  def play_pos1(%PlayInfo{hand: hand, valid_cards: cards} = info, game_state) do
+    cond do
+      info.me_nil ->
+        find_optimal_nil_lead(cards, game_state)
+
+      info.partner_nil ->
+        find_partner_nil_support(cards, game_state)
+
+      endgame?(info, game_state) ->
+        play_endgame_lead(cards, hand, game_state)
+
+      should_lead_trump?(hand, game_state) ->
+        lead_trump_strategically(cards, game_state)
+
+      has_establishment_potential?(hand) ->
+        lead_for_establishment(cards, hand, game_state)
+
+      true ->
+        lead_standard(cards, hand, game_state)
+    end
   end
 
-  defp lead_standard_card(cards, hand) do
-    suit_lengths = Enum.group_by(hand, & &1.suit) |> Map.new(fn {k, v} -> {k, length(v)} end)
-    best_suit = Enum.max_by(Map.keys(suit_lengths), fn suit -> suit_lengths[suit] end)
-    suit_cards = Enum.filter(cards, fn %Card{suit: suit} -> suit == best_suit end)
-    
-    if !Enum.empty?(suit_cards) do
-      sorted = Enum.sort_by(suit_cards, & &1.rank, :desc)
-      case length(sorted) do
-        1 -> hd(sorted)
-        2 -> hd(sorted)  # Lead high from doubleton
-        _ -> Enum.at(sorted, 1)  # Lead second highest from 3+
+  @spec play_pos2(PlayInfo.t(), GameState.t()) :: Card.t()
+  def play_pos2(%PlayInfo{valid_cards: cards} = info, game_state) do
+    trick_suit = List.last(info.trick).card.suit
+    current_rank = List.last(info.trick).card.rank
+
+    cond do
+      info.me_nil ->
+        play_lowest_valid(cards, trick_suit)
+
+      info.partner_nil ->
+        play_to_help_nil(cards, trick_suit, current_rank, game_state)
+
+      should_win_second?(info, current_rank, game_state) ->
+        play_winning_second(cards, trick_suit, current_rank)
+
+      true ->
+        play_passively(cards, trick_suit)
+    end
+  end
+
+  @spec play_pos3(PlayInfo.t(), GameState.t()) :: Card.t()
+  def play_pos3(%PlayInfo{valid_cards: cards} = info, game_state) do
+    trick_suit = List.last(info.trick).card.suit
+
+    cond do
+      info.me_nil ->
+        play_lowest_valid(cards, trick_suit)
+
+      info.partner_nil ->
+        play_to_protect_nil(cards, info, game_state)
+
+      info.partner_winning and not critical_trick?(info, game_state) ->
+        play_passively(cards, trick_suit)
+
+      should_win_third?(info, game_state) ->
+        play_winning_third(cards, info, game_state)
+
+      true ->
+        play_passively(cards, trick_suit)
+    end
+  end
+
+  @spec play_pos4(PlayInfo.t(), GameState.t()) :: Card.t()
+  def play_pos4(%PlayInfo{valid_cards: cards} = info, game_state) do
+    trick_suit = List.last(info.trick).card.suit
+
+    cond do
+      info.me_nil ->
+        play_lowest_valid(cards, trick_suit)
+
+      info.partner_winning and not info.partner_nil ->
+        handle_partner_winning_fourth(cards, trick_suit, info, game_state)
+
+      should_win_fourth?(info, game_state) ->
+        play_winning_fourth(cards, info, game_state)
+
+      true ->
+        play_lowest_valid(cards, trick_suit)
+    end
+  end
+
+  # Helper functions
+  defp endgame?(info, game_state) do
+    total_tricks = Enum.sum(Map.values(game_state.tricks_won))
+    total_tricks >= 10
+  end
+
+  defp should_lead_trump?(hand, game_state) do
+    spades = get_spades(hand)
+    remaining_spades = 13 - length(game_state.spades_played)
+    length(spades) > 0 and remaining_spades >= 3
+  end
+
+  defp get_spades(cards) do
+    Enum.filter(cards, &(&1.suit == :s))
+  end
+
+  defp has_establishment_potential?(hand) do
+    suits = Enum.group_by(hand, & &1.suit)
+    Enum.any?(suits, fn {suit, cards} ->
+      suit != :s and length(cards) >= 4 and has_high_cards?(cards)
+    end)
+  end
+
+  defp has_high_cards?(cards) do
+    Enum.any?(cards, &(&1.rank >= 12))
+  end
+
+  defp lead_trump_strategically(cards, game_state) do
+    spades = get_spades(cards)
+    if !Enum.empty?(spades) do
+      if length(game_state.spades_played) <= 6 do
+        Enum.max_by(spades, &(&1.rank))  # Lead high early
+      else
+        Enum.min_by(spades, &(&1.rank))  # Lead low late
       end
     else
       Enum.random(cards)
     end
   end
 
-  @spec play_pos2(PlayInfo.t()) :: Card.t()
-  def play_pos2(%PlayInfo{hand: hand, me_nil: me_nil, partner_nil: partner_nil} = info) do
-    options = card_options(info.trick, info.valid_cards)
-    trick_suit = List.last(info.trick).card.suit
+  defp lead_for_establishment(cards, hand, game_state) do
+    establishable_suit = find_establishable_suit(hand, game_state)
+    suit_cards = Enum.filter(cards, &(&1.suit == establishable_suit))
 
-    to_play = cond do
-      me_nil ->
-        find_safest_follow(info.valid_cards, trick_suit)
-      
-      partner_nil ->
-        if can_win_cheaply?(options, trick_suit), do: options.worst_winner, else: options.best_winner
-        
-      should_win_trick?(info) ->
-        options.worst_winner || options.best_loser
-        
-      true ->
-        options.worst_loser || options.worst_winner
-    end
-
-    to_play || Enum.random(info.valid_cards)
-  end
-
-  defp can_win_cheaply?(options, trick_suit) do
-    case options do
-      %{worst_winner: %Card{suit: suit, rank: rank}} ->
-        suit == trick_suit and rank <= 12
-      _ -> false
-    end
-  end
-
-  defp should_win_trick?(info) do
-    trick_suit = List.last(info.trick).card.suit
-    trick_rank = List.last(info.trick).card.rank
-    trick_suit == :s or (trick_rank >= 12 and !info.partner_nil)
-  end
-
-  defp find_safest_follow(cards, trick_suit) do
-    matching = Enum.filter(cards, fn %Card{suit: suit} -> suit == trick_suit end)
-    if !Enum.empty?(matching) do
-      Enum.min_by(matching, & &1.rank)
+    if !Enum.empty?(suit_cards) do
+      Enum.max_by(suit_cards, &(&1.rank))
     else
-      Enum.min_by(cards, & &1.rank)
+      Enum.random(cards)
     end
   end
 
-  @spec play_pos3(PlayInfo.t()) :: Card.t()
-  def play_pos3(%PlayInfo{me_nil: me_nil, partner_nil: partner_nil, partner_winning: partner_winning} = info) do
-    options = card_options(info.trick, info.valid_cards)
+  defp find_establishable_suit(hand, game_state) do
+    suits = Enum.group_by(hand, & &1.suit)
 
-    to_play = cond do
-      me_nil ->
-        find_safest_follow(info.valid_cards, List.last(info.trick).card.suit)
-        
-      partner_nil ->
-        if partner_winning, do: options.worst_loser, else: options.best_winner
-        
-      partner_winning ->
-        options.worst_loser
-        
-      true ->
-        if should_win_trick?(info), do: options.worst_winner, else: options.best_loser
-    end
-
-    to_play || Enum.random(info.valid_cards)
-  end
-
-  @spec play_pos4(PlayInfo.t()) :: Card.t()
-  def play_pos4(%PlayInfo{me_nil: me_nil, partner_winning: partner_winning, partner_nil: partner_nil} = info) do
-    options = card_options(info.trick, info.valid_cards)
-    trick_value = trick_max(info.trick)
-
-    to_play = cond do
-      me_nil ->
-        find_safest_follow(info.valid_cards, List.last(info.trick).card.suit)
-        
-      partner_winning and not partner_nil ->
-        if should_overtake_partner?(info, trick_value), do: options.worst_winner, else: options.worst_loser
-        
-      must_win_trick?(info) ->
-        options.best_winner || options.best_loser
-        
-      true ->
-        if can_win_cheaply?(options, List.last(info.trick).card.suit), do: options.worst_winner, else: options.worst_loser
-    end
-
-    to_play || Enum.random(info.valid_cards)
-  end
-
-  defp should_overtake_partner?(info, trick_value) do
-    has_high_cards = Enum.any?(info.valid_cards, fn %Card{rank: rank} -> rank >= 13 end)
-    trick_has_spades = Enum.any?(info.trick, fn %TrickCard{card: %Card{suit: suit}} -> suit == :s end)
-    has_high_cards and trick_has_spades and trick_value < 213  # Ace of spades value
-  end
-
-  defp must_win_trick?(info) do
-    trick_has_spades = Enum.any?(info.trick, fn %TrickCard{card: %Card{suit: suit}} -> suit == :s end)
-    high_trick = Enum.any?(info.trick, fn %TrickCard{card: %Card{rank: rank}} -> rank >= 13 end)
-    trick_has_spades or high_trick
-  end
-
-  # Rest of the helper functions remain the same...
-  @spec first_non_nil(list(any)) :: any
-  def first_non_nil(list) when length(list) > 0 do
-    list
-    |> Enum.filter(fn x -> x != nil end)
-    |> List.first()
-  end
-
-  @spec card_options(list(TrickCard.t()), Deck.t()) :: map
-  def card_options([], _valid_cards) do
-    %{
-      worst_winner: nil,
-      best_winner: nil,
-      worst_loser: nil,
-      best_loser: nil
-    }
-  end
-
-  def card_options(trick, valid_cards) when length(trick) > 0 do
-    priority_map = priority_map(trick)
-    trick_max = trick_max(trick)
-
-    sort_cards =
-      valid_cards
-      |> Enum.map(fn %Card{rank: rank, suit: suit} = card ->
-        val = rank + priority_map[suit]
-        {card, val}
-      end)
-      |> Enum.sort_by(fn {_card, val} -> val end)
-
-    winners =
-      sort_cards
-      |> Enum.filter(fn {_card, val} -> val >= trick_max end)
-      |> Enum.map(fn {card, _val} -> card end)
-
-    losers =
-      sort_cards
-      |> Enum.filter(fn {_card, val} -> val < trick_max end)
-      |> Enum.map(fn {card, _val} -> card end)
-
-    %{
-      worst_winner: List.first(winners),
-      best_winner: List.last(winners),
-      worst_loser: List.first(losers),
-      best_loser: List.last(losers)
-    }
-  end
-
-  @spec trick_max(list(TrickCard.t())) :: non_neg_integer
-  def trick_max(trick) when length(trick) > 0 do
-    priority_map = priority_map(trick)
-
-    trick
-    |> Enum.map(fn %TrickCard{card: %Card{rank: rank, suit: suit}} ->
-      rank + priority_map[suit]
+    {suit, _} = Enum.max_by(suits, fn {suit, cards} ->
+      if suit == :s, do: -1,
+      else: establishment_value(cards, game_state)
     end)
-    |> Enum.max()
+
+    suit
   end
 
-  def trick_max([]), do: 0
-
-  @spec priority_map(list(TrickCard.t())) :: map
-  def priority_map(trick) when length(trick) > 0 do
-    List.last(trick).card.suit
-    |> Game.suit_priority()
+  defp establishment_value(cards, game_state) do
+    length(cards) +
+    Enum.count(cards, &(&1.rank >= 12)) * 2 -
+    length(game_state.high_cards_played[hd(cards).suit] || [])
   end
 
-  def priority_map([]) do
-    %{s: 200, h: 100, c: 100, d: 100}
+  defp find_optimal_nil_lead(cards, game_state) do
+    safe_cards = get_safe_cards(cards, game_state)
+    lowest = Enum.min_by(safe_cards, &card_value/1)
+    fallback = Enum.min_by(cards, &card_value/1)
+    lowest || fallback
   end
-end
+
+  defp get_safe_cards(cards, game_state) do
+    high_cards_played = game_state.high_cards_played
+
+    Enum.filter(cards, fn card ->
+      is_safe_card?(card, high_cards_played)
+    end)
+  end
+
+  defp is_safe_card?(card, high_cards_played) do
+    suit_high_cards = high_cards_played[card.suit] || []
+    higher_cards = Enum.count(suit_high_cards, fn rank -> rank > card.rank end)
+
+    higher_cards >= 2 or card.rank <= 7
+  end
+
+  defp find_partner_nil_support(cards, game_state) do
+    high_cards = Enum.filter(cards, &(&1.rank >= 12))
+    best_high = Enum.max_by(high_cards, &card_value/1)
+    fallback = Enum.max_by(cards, &card_value/1)
+    best_high || fallback
+  end
+
+  defp play_endgame_lead(cards, hand, game_state) do
+    cond do
+      winning_spades_left?(hand, game_state) ->
+        play_highest_spade(cards)
+
+      safe_high_card_available?(cards, game_state) ->
+        play_safe_high_card(cards, game_state)
+
+      true ->
+        play_defensive_endgame(cards, game_state)
+    end
+  end
+
+  defp winning_spades_left?(hand, game_state) do
+    spades = Enum.filter(hand, fn card -> card.suit == :s end)
+    highest_played = highest_spade_played(game_state.spades_played)
+
+    Enum.any?(spades, fn card -> card.rank > highest_played end)
+  end
+
+  defp highest_spade_played(spades_played) do
+    if Enum.empty?(spades_played), do: 0,
+    else: Enum.max_by(spades_played, & &1.rank).rank
+  end
+
+  defp play_highest_spade(cards) do
+    spades = get_spades(cards)
+    if !Enum.empty?(spades), do: Enum.max_by(spades, &(&1.rank)), else: Enum.random(cards)
+  end
+
+  defp safe_high_card_available?(cards, game_state) do
+    high_cards = Enum.filter(cards, &(&1.rank >= 12))
+    !Enum.empty?(high_cards) and
+      Enum.any?(high_cards, fn card -> is_safe_high_card?(card, game_state) end)
+  end
+
+  defp play_safe_high_card(cards, game_state) do
+    high_cards = Enum.filter(cards, &(&1.rank >= 12))
+    safe_cards = Enum.filter(high_cards, &is_safe_high_card?(&1, game_state))
+    Enum.max_by(safe_cards, &card_value/1)
+  end
+
+  defp is_safe_high_card?(card, game_state) do
+    higher_played = game_state.high_cards_played[card.suit] || []
+    length(higher_played) >= 2
+  end
+
+  defp play_defensive_endgame(cards, game_state) do
+    lowest = Enum.min_by(cards, &card_value/1)
+    highest = Enum.max_by(cards, &card_value/1)
+
+    if can_cost_trick?(highest, game_state), do: highest, else: lowest
+  end
+
+  defp lead_standard(cards, hand, game_state) do
+    if should_lead_high?(game_state) do
+      Enum.max_by(cards, &card_value/1)
+    else
+      mid_value_card(cards)
+    end
+  end
+
+  defp should_lead_high?(game_state) do
+    total_tricks = Enum.sum(Map.values(game_state.tricks_won))
+    total_tricks >= 8
+  end
+
+  defp mid_value_card(cards) do
+    sorted = Enum.sort_by(cards, &card_value/1)
+    mid_index = div(length(sorted), 2)
+    Enum.at(sorted, mid_index)
+  end
+
+  defp card_value(%Card{rank: rank, suit: suit}) do
+    base_value = rank
+    suit_bonus = if suit == :s, do: 100, else: 0
+    base_value + suit_bonus
+  end
+
+  defp can_cost_trick?(card, game_state) do
+    high_cards_played = game_state.high_cards_played[card.suit] || []
+    card.rank >= 12 and length(high_cards_played) <= 1
+  end
+
+  # Position-specific play helpers
+  defp play_lowest_valid(cards, trick_suit) do
+    following = Enum.filter(cards, &(&1.suit == trick_suit))
+    if !Enum.empty?(following),
+      do: Enum.min_by(following, &(&1.rank)),
+      else: Enum.min_by(cards, &(&1.rank))
+  end
+
+  defp play_to_help_nil(cards, trick_suit, current_rank, game_state) do
+    following = Enum.filter(cards, &(&1.suit == trick_suit))
+    winners = Enum.filter(following, &(&1.rank > current_rank))
+
+    cond do
+      !Enum.empty?(winners) -> Enum.min_by(winners, &(&1.rank))
+      !Enum.empty?(following) -> Enum.min_by(following, &(&1.rank))
+      can_trump_safely?(cards, trick_suit, game_state) -> get_safe_trump(cards, game_state)
+      true -> Enum.min_by(cards, &(&1.rank))
+    end
+  end
+
+  defp should_win_second?(info, current_rank, game_state) do
+    current_rank >= 12 or
+    critical_trick?(info, game_state)
+  end
+
+  defp play_winning_second(cards, trick_suit, current_rank) do
+    following = Enum.filter(cards, &(&1.suit == trick_suit))
+    winners = Enum.filter(following, &(&1.rank > current_rank))
+    spades = get_spades(cards)
+
+    cond do
+      !Enum.empty?(winners) -> Enum.min_by(winners, &(&1.rank))
+      !Enum.empty?(following) -> Enum.min_by(following, &(&1.rank))
+      !Enum.empty?(spades) -> Enum.min_by(spades, &(&1.rank))
+      true -> Enum.min_by(cards, &(&1.rank))
+    end
+  end
+
+  defp play_passively(cards, trick_suit) do
+    following = Enum.filter(cards, &(&1.suit == trick_suit))
+    if !Enum.empty?(following),
+      do: Enum.min_by(following, &(&1.rank)),
+      else: discard_optimal(cards)
+  end
+
+  defp discard_optimal(cards) do
+    non_spades = Enum.filter(cards, &(&1.suit != :s))
+    if !Enum.empty?(non_spades),
+      do: Enum.max_by(non_spades, &(&1.rank)),
+      else: Enum.min_by(cards, &(&1.rank))
+  end
+
+  defp play_to_protect_nil(cards, info, game_state) do
+    if info.partner_winning,
+      do: play_passively(cards, List.last(info.trick).card.suit),
+      else: play_winning_third(cards, info, game_state)
+  end
+
+  defp should_win_third?(info, game_state) do
+    !info.partner_winning and
+    (critical_trick?(info, game_state) or current_winner_opponent?(info))
+  end
+
+  defp current_winner_opponent?(info) do
+    winner_seat = Game.trick_winner_index(info.trick)
+    winner_seat in [1, 3]  # East or West (opponents)
+  end
+
+  defp play_winning_third(cards, info, game_state) do
+    trick_suit = List.last(info.trick).card.suit
+    following = Enum.filter(cards, &(&1.suit == trick_suit))
+    current_winner = get_current_winning_card(info.trick)
+
+    cond do
+      can_win_with_following?(following, current_winner) ->
+        win_with_following(following, current_winner)
+      can_trump_safely?(cards, trick_suit, game_state) ->
+        get_safe_trump(cards, game_state)
+      true ->
+        play_passively(cards, trick_suit)
+    end
+  end
+
+  defp handle_partner_winning_fourth(cards, trick_suit, info, game_state) do
+    if should_overtake_partner?(info, game_state),
+      do: play_winning_fourth(cards, info, game_state),
+      else: play_passively(cards, trick_suit)
+  end
+
+  defp should_win_fourth?(info, game_state) do
+    !info.partner_winning and critical_trick?(info, game_state)
+  end
+
+  defp play_winning_fourth(cards, info, game_state) do
+    trick_suit = List.last(info.trick).card.suit
+    following = Enum.filter(cards, &(&1.suit == trick_suit))
+    current_winner = get_current_winning_card(info.trick)
+
+    cond do
+      can_win_with_following?(following, current_winner) ->
+        win_with_following(following, current_winner)
+      can_trump_safely?(cards, trick_suit, game_state) ->
+        get_safe_trump(cards, game_state)
+      true ->
+        play_passively(cards, trick_suit)
+    end
+  end
+
+  defp get_current_winning_card(trick) do
+    trick
+    |> Enum.max_by(fn %TrickCard{card: card} -> card_value(card) end)
+    |> Map.get(:card)
+  end
+
+  defp can_win_with_following?(following, current_winner) do
+    !Enum.empty?(following) and
+    Enum.any?(following, &(&1.rank > current_winner.rank))
+  end
+
+  defp win_with_following(following, current_winner) do
+    winners = Enum.filter(following, &(&1.rank > current_winner.rank))
+    Enum.min_by(winners, &(&1.rank))
+  end
+
+  defp should_overtake_partner?(info, game_state) do
+    critical_trick?(info, game_state) and
+    length(game_state.spades_played) >= 8
+  end
+
+  defp critical_trick?(info, game_state) do
+    trick_value = calculate_trick_value(info.trick)
+    total_tricks = Enum.sum(Map.values(game_state.tricks_won))
+
+    trick_value >= 10 or total_tricks >= 10
+  end
+
+  defp calculate_trick_value(trick) do
+    trick
+    |> Enum.map(fn %TrickCard{card: card} -> card_value(card) end)
+    |> Enum.max(fn -> 0 end)
+  end
+
+  defp can_trump_safely?(cards, trick_suit, game_state) do
+    spades = get_spades(cards)
+    !Enum.empty?(spades) and trick_suit != :s and
+      length(game_state.spades_played) <= 8
+  end
+
+  defp get_safe_trump(cards, game_state) do
+    spades = get_spades(cards)
+    highest_played = highest_spade_played(game_state.spades_played)
+
+    safe_spades = Enum.filter(spades, &(&1.rank > highest_played))
+    if !Enum.empty?(safe_spades),
+      do: Enum.min_by(safe_spades, &(&1.rank)),
+      else: Enum.min_by(spades, &(&1.rank))
+  end
 end
